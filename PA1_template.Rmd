@@ -1,0 +1,235 @@
+---
+title: Using R markdown to document R programs.
+---
+
+<center>
+author: A. A. El Haddi  <br>
+date: Jan, 13th, 2019<br>
+[Get the Code from:<br> EnduraData Global Data Distribution and Automated File Synchronization and Server Mirroring](https://www.enduradata.com)
+</center>
+
+# Note: how to process the Rmd file. 
+Use the following command line to process the Rmd file.
+Best to put the following line in a bash script or Makefile and pass in the file names as arguments
+
+R -e "rmarkdown::render('$1')"
+
+# Include the packages that we will need
+
+``` {r includelibs }
+
+library(lubridate)
+library(ggplot2)
+
+```
+
+
+#Loading and preprocessing the data
+### Load the data 
+
+### 1. Code for reading in the dataset and/or processing the data
+
+
+``` {r input}
+zipactivity <- "activity.zip"
+unzipactivity <- "activity.csv"
+activity <- read.csv2(unz(zipactivity, unzipactivity), header = TRUE, sep = ",",  dec = ".", fill = TRUE, na.strings = "NA")
+
+```
+
+## Quick check the data
+
+
+
+``` {r checkdata }
+dim(activity)
+head(activity)
+names(activity)
+
+```
+
+## Transform dates, add weekends, etc
+
+``` {r transformsdates }
+
+activity$date<-as.Date(activity$date, format="%Y-%m-%d")
+activity$weekday <- weekdays(activity$date)
+activity$dayofweek <- wday(activity$date)
+activity$isweekend <- wday(activity$date) %in% c(1,7)
+
+ssize <- dim(activity)[1]
+ activity$wdaytype <- "weekday"
+ activity$wcolor <- "red"
+
+ for (i in 1:ssize) {
+    if (activity[i, "isweekend"])  {
+		activity[i, "wdaytype"] <- "weekend"
+ 		activity$wcolor <- "green"
+	}
+ }
+
+```
+
+# Crude analysis including missing values
+### 2. Histogram of the total number of steps taken each day
+
+The histogram includes missing values as well
+
+
+
+``` {r histwithmval }
+	
+hist(activity$steps, col="red", main="Number of steps, missing values not imputed")
+
+```
+
+
+
+## 3. Mean and median number of steps taken each day
+## Get total steps per day
+
+Here we did not exclude the missing values yet
+
+
+``` {r simpleprocess }
+
+stepsperday <- aggregate(activity[, "steps"], list(activity$date), sum)
+colnames(stepsperday) <- c("date", "steps")
+
+m <- mean(stepsperday$steps)
+
+```
+
+* The mean total number of steps taken (when missing values are not excluded is) `r mean(stepsperday$steps)`
+
+* The median total number of steps taken (when missing values are not excluded is) `r median(stepsperday$steps)`
+
+## Mean and median after we ignore missing values
+
+``` {r statnomv}
+
+# We turn into integer to avoid representation like 1.76600000E04
+avgx<-as.integer(mean(stepsperday$steps, na.rm=TRUE))
+med<- as.integer(median(stepsperday$steps,  na.rm=TRUE))
+
+```
+
+* The mean total number of steps taken (when missing values are excluded) is `r avgx`
+
+* The median total number of steps taken (when missing values are excluded ) is `r med`
+
+
+### 4. Time series plot of the average number of steps taken
+
+``` {r timeseriesplot}
+
+avstepsperinterval <- aggregate(activity[, "steps"], list(activity$interval), mean, na.rm=TRUE)
+colnames(avstepsperinterval) <- c("interval", "steps")
+plot(avstepsperinterval$interval, avstepsperinterval$steps, type='l', main="Average steps per interval over all dates")
+maxsteps<-max(avstepsperinterval$steps)
+
+
+```
+
+
+
+### 5. Maximum number of steps
+
+``` {r maxi}
+ s1<-subset(avstepsperinterval, steps==maxsteps)
+ maxi<-s1$interval
+ plot(avstepsperinterval$interval, avstepsperinterval$steps, type='l', main="Average steps per interval over all dates")
+ abline(v=maxi, col="red")
+```
+
+The red vertical line shows that the maximum number of steps occurs at `r s1$interval`
+
+
+### 6. Code to describe and show a strategy for imputing missing data
+
+
+## Find and treat missing values
+We create another subset without missing values. We will use later to estimate missing values means.
+
+###imputing missing values
+``` {r mvvals }
+
+# find missing values
+mv <- is.na(activity$steps)
+
+dim(mv)
+
+# set without missing values
+nomvactivity<-activity[!mv,]
+
+# set with missing values
+mvactivity<-activity[mv,]
+
+print("Dimension of missing value data set")
+dim(mvactivity)
+
+``` 
+
+Total number of missing values : `r dim(mvactivity)[1]`
+
+```  {r imputemv }
+
+
+# We impute
+# For each missing value we estimate the value using non missing values for that step
+
+ # create another instance of the activity data set but track which steps were estimated
+
+ imactivity <- activity
+ imactivity$hadmv <- FALSE
+ imactivity$orgsteps <- imactivity$steps
+
+ for (i in 1:dim(imactivity)[1]) {
+
+	## redundant test but leave here in case we want to replace within same data set
+    if (is.na(imactivity[i, "steps"]))  {
+
+		# current interval
+		 cinterval<-imactivity[i, "interval"]
+
+		 # mean of all intervals equal to current interval without missing values
+		 umv <- mean(subset(imactivity, interval == cinterval)$steps, na.rm=TRUE)
+
+		 # Here we round up the number of steps
+		 imactivity[i, "steps"] <- round(umv)
+		 imactivity[i, "hadmv"] <- TRUE
+	}
+ }
+
+``` 
+
+### 7. Histogram of the total number of steps taken each day after missing values are imputed
+
+
+``` {r histwithoutmv }
+hist(imactivity$steps, col="yellow", main="Number of steps -- missing values imputed")
+
+```
+
+### 8. Panel plot comparing the average number of steps taken per 5-minute interval across weekdays and weekends
+
+(see transformsdates chunck where we already added weekdays, weekends etc)
+
+``` {r facetplot }
+
+
+avstepsperintervalwkday <- aggregate(activity[, "steps"], list(activity$interval, activity$wdaytype), mean, na.rm=TRUE)
+colnames(avstepsperintervalwkday) <- c("interval", "wdaytype", "steps")
+
+
+ ggplot(avstepsperintervalwkday, aes(x=interval, y=steps)) +
+    geom_point( color="gray", size=3, alpha=.7) +
+    facet_grid(. ~ wdaytype) +
+    labs(x="5 minute Intervals", y="Total number of steps") +
+    ggtitle("Total number of steps by interval by Weekend and Week day") +
+    geom_line()
+
+
+```
+
+
